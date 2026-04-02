@@ -213,6 +213,14 @@ def create_app() -> FastAPI:
             ),
         }
 
+    @app.post("/jobs/{job_id}/cancel")
+    async def cancel_job(job_id: str) -> dict:
+        try:
+            job = container.job_service.cancel_job(job_id)
+        except KeyError:
+            return {"job_id": job_id, "status": "missing"}
+        return {"job_id": job.job_id, "status": job.status}
+
     @app.get("/jobs/{job_id}/events")
     async def get_job_events(job_id: str) -> dict:
         job = container.job_service.job_repository.get(job_id)

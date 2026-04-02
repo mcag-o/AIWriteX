@@ -3,6 +3,8 @@ import json
 import tempfile
 import unittest
 
+from content_hub.application.jobs.job_service import JobEvent, JobRun
+from content_hub.infrastructure.storage.job_repository import FileJobRepository
 from content_hub.domain.content.entities import ContentDocument
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
 from content_hub.infrastructure.storage.publish_record_repository import FilePublishRecordRepository
@@ -95,6 +97,30 @@ class RepositoryTestCase(unittest.TestCase):
             self.assertIn("Demo Title", payload)
             self.assertEqual(payload["Demo Title"][0]["platform"], "wechat")
             self.assertEqual(repository.list_records()["Demo Title"][0]["platform"], "wechat")
+
+    def test_file_job_repository_persists_job_status_events_and_artifact_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileJobRepository(Path(tmp_dir) / "jobs.json")
+            artifact_path = Path(tmp_dir) / "output" / "article.md"
+            job = JobRun(
+                job_id="job-1",
+                status="completed",
+                error="",
+                artifact_path=artifact_path,
+                events=[
+                    JobEvent(job_id="job-1", status="running", message="workflow started"),
+                    JobEvent(job_id="job-1", status="completed", message="workflow completed", detail="saved"),
+                ],
+            )
+
+            repository.save(job)
+            restored = repository.get("job-1")
+
+            self.assertIsNotNone(restored)
+            self.assertEqual(restored.status, "completed")
+            self.assertEqual(restored.artifact_path, artifact_path)
+            self.assertEqual([event.status for event in restored.events], ["running", "completed"])
+            self.assertEqual(restored.events[-1].detail, "saved")
 
 
 if __name__ == "__main__":

@@ -7,8 +7,12 @@ from content_hub.application.services.content_service import ContentService
 from content_hub.application.services.publish_service import PublishService
 from content_hub.application.services.template_service import TemplateService
 from content_hub.application.services.workflow_service import WorkflowService
+from content_hub.application.jobs.event_service import JobEventService
+from content_hub.application.jobs.job_service import InMemoryJobRepository, JobRun
+from content_hub.bootstrap.container import build_container
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
+from content_hub.infrastructure.storage.job_repository import FileJobRepository
 from content_hub.infrastructure.storage.publish_record_repository import FilePublishRecordRepository
 from content_hub.infrastructure.storage.template_repository import FileTemplateRepository
 from content_hub.runtime.nodes.generation import StaticGenerationNode
@@ -154,6 +158,47 @@ dimensional_creative:
             self.assertIn("styled", result.document.body)
             self.assertTrue(result.artifact_path is not None)
             self.assertEqual(result.publish_results[0].platform, "wechat")
+
+    def test_job_event_service_appends_and_lists_job_events(self) -> None:
+        repository = InMemoryJobRepository()
+        service = JobEventService(repository)
+        job = repository.save(JobRun(job_id="job-1", status="running"))
+
+        service.record(job, status="running", message="workflow started")
+        service.record(job, status="completed", message="workflow completed", detail="artifact ready")
+
+        self.assertEqual([event.status for event in service.list_events("job-1")], ["running", "completed"])
+        self.assertEqual(service.list_events("job-1")[-1].detail, "artifact ready")
+
+    def test_build_container_exposes_job_event_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir)
+            config_dir = project_root / "src" / "ai_write_x" / "config"
+            config_dir.mkdir(parents=True)
+            (config_dir / "config.yaml").write_text(
+                """
+publish_platform: wechat
+article_format: markdown
+auto_publish: false
+wechat:
+  credentials: []
+api:
+  api_type: OpenRouter
+  OpenRouter:
+    model_index: 0
+    key_index: 0
+    model: [openrouter/test-model]
+    api_key: [test-key]
+dimensional_creative:
+  enabled: false
+""".strip(),
+                encoding="utf-8",
+            )
+
+            container = build_container(project_root)
+
+            self.assertIsInstance(container.job_event_service, JobEventService)
+            self.assertIsInstance(container.job_service.job_repository, FileJobRepository)
 
 
 if __name__ == "__main__":

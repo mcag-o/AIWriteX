@@ -25,6 +25,7 @@ class ApiStructureTestCase(unittest.TestCase):
         self.assertIn('@app.get("/publish/records")', source)
         self.assertIn('@app.post("/jobs")', source)
         self.assertIn('@app.get("/jobs/{job_id}")', source)
+        self.assertIn('@app.post("/jobs/{job_id}/cancel")', source)
         self.assertIn('@app.get("/jobs/{job_id}/events")', source)
         self.assertIn('@app.post("/workflows/execute")', source)
 

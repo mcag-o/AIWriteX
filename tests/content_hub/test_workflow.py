@@ -131,6 +131,32 @@ class WorkflowEngineTestCase(unittest.TestCase):
             self.assertEqual(job.events[-1].message, "workflow failed")
             self.assertEqual(job.events[-1].detail, "missing-node")
 
+    def test_job_service_can_cancel_existing_job_and_append_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = HubSettings(
+                llm=LLMSettings(provider="stub", model="stub-model"),
+                workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+                rewrite=RewriteSettings(enabled=False),
+                template=TemplateSettings(root_dir=tmp_path / "templates"),
+                storage=StorageSettings(root_dir=tmp_path / "storage"),
+                publish=PublishSettings(wechat_credentials=[]),
+            )
+            jobs = JobService(engine=WorkflowEngine(NodeRegistry()), job_repository=InMemoryJobRepository())
+            existing = jobs.job_repository.save(jobs.create_job_run())
+
+            cancelled = jobs.cancel_job(existing.job_id)
+
+            self.assertEqual(cancelled.status, "cancelled")
+            self.assertEqual(cancelled.events[-1].status, "cancelled")
+            self.assertEqual(cancelled.events[-1].message, "workflow cancelled")
+
+    def test_job_service_cancel_missing_job_raises_key_error(self) -> None:
+        jobs = JobService(engine=WorkflowEngine(NodeRegistry()), job_repository=InMemoryJobRepository())
+
+        with self.assertRaises(KeyError):
+            jobs.cancel_job("missing-job")
+
 
 if __name__ == "__main__":
     unittest.main()

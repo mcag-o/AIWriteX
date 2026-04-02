@@ -84,6 +84,53 @@ class WorkflowEngineTestCase(unittest.TestCase):
             self.assertIsNotNone(job.result)
             self.assertIsNotNone(job.result.artifact_path)
 
+    def test_job_service_records_job_events_for_successful_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = HubSettings(
+                llm=LLMSettings(provider="stub", model="stub-model"),
+                workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+                rewrite=RewriteSettings(enabled=True),
+                template=TemplateSettings(root_dir=tmp_path / "templates"),
+                storage=StorageSettings(root_dir=tmp_path / "storage"),
+                publish=PublishSettings(wechat_credentials=[]),
+            )
+            registry = NodeRegistry()
+            registry.register("generate", StaticGenerationNode())
+            registry.register("rewrite", SuffixRewriteNode(" [evented]"))
+            registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
+            engine = WorkflowEngine(registry)
+            jobs = JobService(engine=engine, job_repository=InMemoryJobRepository())
+            workflow = WorkflowDefinition(name="job-events", nodes=["generate", "rewrite", "persist"])
+
+            job = jobs.run_workflow(workflow=workflow, settings=settings, payload={"topic": "事件测试"})
+
+            self.assertEqual(job.status, "completed")
+            self.assertEqual([event.status for event in job.events], ["running", "completed"])
+            self.assertEqual(job.events[0].message, "workflow started")
+            self.assertEqual(job.events[1].message, "workflow completed")
+
+    def test_job_service_records_failure_event_when_workflow_raises(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = HubSettings(
+                llm=LLMSettings(provider="stub", model="stub-model"),
+                workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+                rewrite=RewriteSettings(enabled=False),
+                template=TemplateSettings(root_dir=tmp_path / "templates"),
+                storage=StorageSettings(root_dir=tmp_path / "storage"),
+                publish=PublishSettings(wechat_credentials=[]),
+            )
+            jobs = JobService(engine=WorkflowEngine(NodeRegistry()), job_repository=InMemoryJobRepository())
+            workflow = WorkflowDefinition(name="job-events-fail", nodes=["missing-node"])
+
+            job = jobs.run_workflow(workflow=workflow, settings=settings, payload={"topic": "失败事件"})
+
+            self.assertEqual(job.status, "failed")
+            self.assertEqual([event.status for event in job.events], ["running", "failed"])
+            self.assertEqual(job.events[-1].message, "workflow failed")
+            self.assertEqual(job.events[-1].detail, "missing-node")
+
 
 if __name__ == "__main__":
     unittest.main()

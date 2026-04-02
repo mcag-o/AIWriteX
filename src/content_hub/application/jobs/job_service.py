@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict
 from uuid import uuid4
 
@@ -16,6 +16,15 @@ class JobRun:
     status: str
     result: WorkflowContext | None = None
     error: str | None = None
+    events: list["JobEvent"] = field(default_factory=list)
+
+
+@dataclass
+class JobEvent:
+    job_id: str
+    status: str
+    message: str
+    detail: str = ""
 
 
 class InMemoryJobRepository:
@@ -42,13 +51,20 @@ class JobService:
         payload: dict,
     ) -> JobRun:
         job = JobRun(job_id=str(uuid4()), status="running")
+        self._record_event(job, status="running", message="workflow started")
         self.job_repository.save(job)
         try:
             context = WorkflowContext(settings=settings, payload=payload)
             result = self.engine.execute(workflow, context)
             job.status = "completed"
             job.result = result
+            self._record_event(job, status="completed", message="workflow completed")
         except Exception as exc:
             job.status = "failed"
             job.error = str(exc)
+            detail = exc.args[0] if len(exc.args) == 1 and isinstance(exc.args[0], str) else str(exc)
+            self._record_event(job, status="failed", message="workflow failed", detail=detail)
         return self.job_repository.save(job)
+
+    def _record_event(self, job: JobRun, status: str, message: str, detail: str = "") -> None:
+        job.events.append(JobEvent(job_id=job.job_id, status=status, message=message, detail=detail))

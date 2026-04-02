@@ -213,6 +213,23 @@ def create_app() -> FastAPI:
             ),
         }
 
+    @app.get("/jobs/{job_id}/events")
+    async def get_job_events(job_id: str) -> dict:
+        job = container.job_service.job_repository.get(job_id)
+        if job is None:
+            return {"job_id": job_id, "events": []}
+        return {
+            "job_id": job.job_id,
+            "events": [
+                {
+                    "status": event.status,
+                    "message": event.message,
+                    "detail": event.detail,
+                }
+                for event in job.events
+            ],
+        }
+
     @app.post("/workflows/execute")
     async def execute_workflow(request: ExecuteWorkflowRequest) -> dict:
         result = container.workflow_service.run_default_workflow(

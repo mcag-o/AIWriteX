@@ -3,6 +3,8 @@ import tempfile
 import unittest
 
 from content_hub.application.jobs.job_service import InMemoryJobRepository, JobService
+from content_hub.application.publishers.record_only_publisher import RecordOnlyPublisher
+from content_hub.application.services.publish_service import PublishService
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
 from content_hub.domain.workflow.models import WorkflowDefinition
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
@@ -35,13 +37,14 @@ class WorkflowEngineTestCase(unittest.TestCase):
             registry = NodeRegistry()
             article_repository = FileArticleRepository(settings.storage.article_dir)
             publish_repository = FilePublishRecordRepository(settings.storage.publish_record_file)
+            publish_service = PublishService(publish_repository, {"wechat": RecordOnlyPublisher(publish_repository)})
             template_repository = FileTemplateRepository(settings.template.root_dir)
             engine = WorkflowEngine(registry)
 
             registry.register("generate", StaticGenerationNode())
             registry.register("rewrite", SuffixRewriteNode(" -- rewritten"))
             registry.register("persist", PersistNode(article_repository))
-            registry.register("publish", RecordPublishNode(publish_repository, settings.workflow.publish_platform))
+            registry.register("publish", RecordPublishNode(publish_service, settings.workflow.publish_platform))
 
             workflow = WorkflowDefinition(
                 name="demo",

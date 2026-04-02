@@ -7,10 +7,13 @@ from content_hub.application.services.content_service import ContentService
 from content_hub.application.services.publish_service import PublishService
 from content_hub.application.services.template_service import TemplateService
 from content_hub.application.services.workflow_service import WorkflowService
+from content_hub.application.publishers.record_only_publisher import RecordOnlyPublisher
+from content_hub.application.publishers.wechat_publisher import WeChatPublisher
 from content_hub.application.jobs.event_service import JobEventService
 from content_hub.application.jobs.job_service import InMemoryJobRepository, JobRun, JobService
 from content_hub.bootstrap.container import build_container
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
+from content_hub.domain.content.entities import ContentDocument
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
 from content_hub.infrastructure.storage.job_event_repository import FileJobEventRepository
 from content_hub.infrastructure.storage.job_repository import FileJobRepository
@@ -136,6 +139,98 @@ dimensional_creative:
             self.assertEqual(len(history), 1)
             self.assertEqual(history[0]["account_info"]["appid"], "a")
 
+    def test_publish_service_publishes_document_through_unified_entry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FilePublishRecordRepository(Path(tmp_dir) / "publish_records.json")
+            service = PublishService(repository, {"wechat": RecordOnlyPublisher(repository)})
+            document = ContentDocument(title="Article A", body="# Demo", content_format="markdown")
+
+            result = service.publish_document(document, platform="wechat")
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.platform, "wechat")
+            self.assertEqual(result.message, "recorded")
+            self.assertEqual(result.metadata["publisher"], "record_only")
+            self.assertEqual(service.get_history("Article A")[0]["platform"], "wechat")
+
+    def test_publish_service_returns_structured_failure_for_unsupported_platform(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FilePublishRecordRepository(Path(tmp_dir) / "publish_records.json")
+            service = PublishService(repository, {"wechat": RecordOnlyPublisher(repository)})
+            document = ContentDocument(title="Article A", body="# Demo", content_format="markdown")
+
+            result = service.publish_document(document, platform="xiaohongshu")
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.platform, "xiaohongshu")
+            self.assertEqual(result.metadata["error_code"], "UNSUPPORTED_PLATFORM")
+
+    def test_wechat_publisher_returns_structured_publish_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FilePublishRecordRepository(Path(tmp_dir) / "publish_records.json")
+            publisher = WeChatPublisher(
+                repository,
+                [WeChatCredential(appid="wx-app", appsecret="wx-secret", author="Tester")],
+            )
+            document = ContentDocument(title="Article A", body="# Demo", content_format="markdown")
+
+            result = publisher.publish(document, platform="wechat")
+
+            self.assertTrue(result.success)
+            self.assertEqual(result.platform, "wechat")
+            self.assertEqual(result.metadata["channel"], "wechat")
+            self.assertEqual(result.metadata["publisher"], "wechat")
+            self.assertEqual(result.metadata["appid"], "wx-app")
+            self.assertEqual(result.metadata["author"], "Tester")
+            self.assertEqual(repository.list_records()["Article A"][0]["platform"], "wechat")
+
+    def test_wechat_publisher_uses_first_configured_credential_as_account_info(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FilePublishRecordRepository(Path(tmp_dir) / "publish_records.json")
+            publisher = WeChatPublisher(
+                repository,
+                [
+                    WeChatCredential(appid="wx-first", appsecret="secret-1", author="Author A"),
+                    WeChatCredential(appid="wx-second", appsecret="secret-2", author="Author B"),
+                ],
+            )
+            document = ContentDocument(title="Article B", body="# Demo", content_format="markdown")
+
+            publisher.publish(document, platform="wechat")
+
+            record = repository.list_records()["Article B"][0]
+            self.assertEqual(record["account_info"]["appid"], "wx-first")
+            self.assertEqual(record["account_info"]["author"], "Author A")
+
+    def test_build_container_exposes_wechat_publisher(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_root = Path(tmp_dir)
+            config_dir = project_root / "src" / "ai_write_x" / "config"
+            config_dir.mkdir(parents=True)
+            (config_dir / "config.yaml").write_text(
+                """
+publish_platform: wechat
+article_format: markdown
+auto_publish: false
+wechat:
+  credentials: []
+api:
+  api_type: OpenRouter
+  OpenRouter:
+    model_index: 0
+    key_index: 0
+    model: [openrouter/test-model]
+    api_key: [test-key]
+dimensional_creative:
+  enabled: false
+""".strip(),
+                encoding="utf-8",
+            )
+
+            container = build_container(project_root)
+
+            self.assertIsInstance(container.publish_service.publishers["wechat"], WeChatPublisher)
+
     def test_workflow_service_builds_default_registry_and_executes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -152,7 +247,16 @@ dimensional_creative:
             registry.register("generate", StaticGenerationNode())
             registry.register("rewrite", SuffixRewriteNode(" [styled]"))
             registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
-            registry.register("publish", RecordPublishNode(FilePublishRecordRepository(settings.storage.publish_record_file), "wechat"))
+            registry.register(
+                "publish",
+                RecordPublishNode(
+                    PublishService(
+                        FilePublishRecordRepository(settings.storage.publish_record_file),
+                        {"wechat": RecordOnlyPublisher(FilePublishRecordRepository(settings.storage.publish_record_file))},
+                    ),
+                    "wechat",
+                ),
+            )
 
             service = WorkflowService(registry)
             result = service.run_default_workflow(settings=settings, payload={"topic": "服务化测试"})

@@ -3,7 +3,10 @@ import tempfile
 import unittest
 
 from content_hub.application.jobs.job_service import InMemoryJobRepository, JobService
+from content_hub.application.publishers.record_only_publisher import RecordOnlyPublisher
+from content_hub.application.services.publish_service import PublishService
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
+from content_hub.domain.content.entities import ContentDocument
 from content_hub.domain.workflow.models import WorkflowDefinition
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
 from content_hub.infrastructure.storage.publish_record_repository import FilePublishRecordRepository
@@ -18,6 +21,30 @@ from content_hub.runtime.nodes.rewrite import SuffixRewriteNode
 
 
 class WorkflowEngineTestCase(unittest.TestCase):
+    def test_publish_node_delegates_to_publish_service(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            publish_repository = FilePublishRecordRepository(tmp_path / "publish_records.json")
+            publish_service = PublishService(publish_repository, {"wechat": RecordOnlyPublisher(publish_repository)})
+            node = RecordPublishNode(publish_service, "wechat")
+            context = WorkflowContext(
+                settings=HubSettings(
+                    llm=LLMSettings(provider="stub", model="stub-model"),
+                    workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=True),
+                    rewrite=RewriteSettings(enabled=False),
+                    template=TemplateSettings(root_dir=tmp_path / "templates"),
+                    storage=StorageSettings(root_dir=tmp_path / "storage"),
+                    publish=PublishSettings(wechat_credentials=[]),
+                ),
+                payload={"topic": "发布委托"},
+                document=ContentDocument(title="Publish Title", body="# Publish", content_format="markdown"),
+            )
+
+            result = node.execute(context)
+
+            self.assertEqual(len(result.publish_results), 1)
+            self.assertTrue(result.publish_results[0].success)
+            self.assertEqual(publish_service.get_history("Publish Title")[0]["platform"], "wechat")
     def test_executes_registered_nodes_and_persists_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)
@@ -35,13 +62,14 @@ class WorkflowEngineTestCase(unittest.TestCase):
             registry = NodeRegistry()
             article_repository = FileArticleRepository(settings.storage.article_dir)
             publish_repository = FilePublishRecordRepository(settings.storage.publish_record_file)
+            publish_service = PublishService(publish_repository, {"wechat": RecordOnlyPublisher(publish_repository)})
             template_repository = FileTemplateRepository(settings.template.root_dir)
             engine = WorkflowEngine(registry)
 
             registry.register("generate", StaticGenerationNode())
             registry.register("rewrite", SuffixRewriteNode(" -- rewritten"))
             registry.register("persist", PersistNode(article_repository))
-            registry.register("publish", RecordPublishNode(publish_repository, settings.workflow.publish_platform))
+            registry.register("publish", RecordPublishNode(publish_service, settings.workflow.publish_platform))
 
             workflow = WorkflowDefinition(
                 name="demo",

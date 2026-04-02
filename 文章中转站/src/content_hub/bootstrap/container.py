@@ -5,6 +5,8 @@ from pathlib import Path
 
 from content_hub.application.jobs.event_service import JobEventService
 from content_hub.application.jobs.job_service import InMemoryJobRepository, JobService
+from content_hub.application.publishers.record_only_publisher import RecordOnlyPublisher
+from content_hub.application.publishers.wechat_publisher import WeChatPublisher
 from content_hub.application.services.config_service import ConfigService
 from content_hub.application.services.content_service import ContentService
 from content_hub.application.services.publish_service import PublishService
@@ -44,6 +46,16 @@ def build_container(project_root: Path, settings: HubSettings | None = None) -> 
     publish_record_repository = FilePublishRecordRepository(resolved_settings.storage.publish_record_file)
     job_repository = FileJobRepository(resolved_settings.storage.root_dir / "jobs.json")
     job_event_repository = FileJobEventRepository(resolved_settings.storage.root_dir / "job_events.json")
+    publish_service = PublishService(
+        publish_record_repository,
+        {
+            "wechat": WeChatPublisher(
+                publish_record_repository,
+                resolved_settings.publish.wechat_credentials,
+            ),
+            "record-only": RecordOnlyPublisher(publish_record_repository),
+        },
+    )
 
     registry = NodeRegistry()
     registry.register("generate", StaticGenerationNode())
@@ -51,7 +63,7 @@ def build_container(project_root: Path, settings: HubSettings | None = None) -> 
     registry.register("persist", PersistNode(article_repository))
     registry.register(
         "publish",
-        RecordPublishNode(publish_record_repository, resolved_settings.workflow.publish_platform),
+        RecordPublishNode(publish_service, resolved_settings.workflow.publish_platform),
     )
 
     workflow_service = WorkflowService(registry)
@@ -63,7 +75,7 @@ def build_container(project_root: Path, settings: HubSettings | None = None) -> 
         config_service=config_service,
         template_service=TemplateService(template_repository),
         content_service=ContentService(article_repository),
-        publish_service=PublishService(publish_record_repository),
+        publish_service=publish_service,
         workflow_service=workflow_service,
         job_service=job_service,
         job_event_service=job_event_service,

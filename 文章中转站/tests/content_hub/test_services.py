@@ -4,6 +4,7 @@ import unittest
 
 from content_hub.application.services.config_service import ConfigService
 from content_hub.application.services.content_service import ContentService
+from content_hub.application.publishers.record_only_publisher import RecordOnlyPublisher
 from content_hub.application.services.publish_service import PublishService
 from content_hub.application.services.template_service import TemplateService
 from content_hub.application.services.workflow_service import WorkflowService
@@ -146,7 +147,16 @@ dimensional_creative:
             registry.register("generate", StaticGenerationNode())
             registry.register("rewrite", SuffixRewriteNode(" [styled]"))
             registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
-            registry.register("publish", RecordPublishNode(FilePublishRecordRepository(settings.storage.publish_record_file), "wechat"))
+            registry.register(
+                "publish",
+                RecordPublishNode(
+                    PublishService(
+                        FilePublishRecordRepository(settings.storage.publish_record_file),
+                        {"wechat": RecordOnlyPublisher(FilePublishRecordRepository(settings.storage.publish_record_file))},
+                    ),
+                    "wechat",
+                ),
+            )
 
             service = WorkflowService(registry)
             result = service.run_default_workflow(settings=settings, payload={"topic": "服务化测试"})

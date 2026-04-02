@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from content_hub.application.jobs.job_service import JobEvent, JobRun
+from content_hub.infrastructure.storage.job_event_repository import FileJobEventRepository
 from content_hub.infrastructure.storage.job_repository import FileJobRepository
 from content_hub.domain.content.entities import ContentDocument
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
@@ -121,6 +122,35 @@ class RepositoryTestCase(unittest.TestCase):
             self.assertEqual(restored.artifact_path, artifact_path)
             self.assertEqual([event.status for event in restored.events], ["running", "completed"])
             self.assertEqual(restored.events[-1].detail, "saved")
+
+    def test_file_job_repository_lists_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileJobRepository(Path(tmp_dir) / "jobs.json")
+            repository.save(JobRun(job_id="job-1", status="running"))
+            repository.save(JobRun(job_id="job-2", status="completed"))
+
+            jobs = repository.list_jobs()
+
+            self.assertEqual([job.job_id for job in jobs], ["job-1", "job-2"])
+
+    def test_file_job_event_repository_persists_and_lists_events_by_job(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileJobEventRepository(Path(tmp_dir) / "job_events.json")
+
+            repository.append(
+                JobEvent(job_id="job-1", status="running", message="workflow started")
+            )
+            repository.append(
+                JobEvent(job_id="job-1", status="completed", message="workflow completed", detail="saved")
+            )
+            repository.append(
+                JobEvent(job_id="job-2", status="failed", message="workflow failed", detail="boom")
+            )
+
+            events = repository.list_by_job("job-1")
+
+            self.assertEqual([event.status for event in events], ["running", "completed"])
+            self.assertEqual(events[-1].detail, "saved")
 
 
 if __name__ == "__main__":

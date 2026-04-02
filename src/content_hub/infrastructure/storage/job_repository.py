@@ -28,6 +28,10 @@ class FileJobRepository:
             return None
         return self._deserialize_job(raw)
 
+    def list_jobs(self) -> list[JobRun]:
+        payload = self._load_all()
+        return [self._deserialize_job(payload[job_id]) for job_id in sorted(payload)]
+
     def _load_all(self) -> dict:
         if not self.storage_file.exists():
             return {}

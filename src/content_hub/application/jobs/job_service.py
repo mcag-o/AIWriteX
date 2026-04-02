@@ -40,11 +40,16 @@ class InMemoryJobRepository:
     def get(self, job_id: str) -> JobRun | None:
         return self._jobs.get(job_id)
 
+    def list_jobs(self) -> list[JobRun]:
+        return [self._jobs[key] for key in sorted(self._jobs)]
+
 
 class JobRepository(Protocol):
     def save(self, job: JobRun) -> JobRun: ...
 
     def get(self, job_id: str) -> JobRun | None: ...
+
+    def list_jobs(self) -> list[JobRun]: ...
 
 
 class JobService:
@@ -87,6 +92,9 @@ class JobService:
         job.status = "cancelled"
         self._record_event(job, status="cancelled", message="workflow cancelled")
         return self.job_repository.save(job)
+
+    def list_jobs(self) -> list[JobRun]:
+        return self.job_repository.list_jobs()
 
     def _record_event(self, job: JobRun, status: str, message: str, detail: str = "") -> None:
         if self.event_service is not None:

@@ -189,6 +189,19 @@ def create_app() -> FastAPI:
             return {"data": container.publish_service.get_history(article_title)}
         return {"data": container.publish_service.list_records()}
 
+    @app.get("/jobs")
+    async def list_jobs() -> dict:
+        return {
+            "data": [
+                {
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "artifact_path": str(job.artifact_path) if job.artifact_path is not None else None,
+                }
+                for job in container.job_service.list_jobs()
+            ]
+        }
+
     @app.post("/jobs")
     async def create_job(request: CreateJobRequest) -> dict:
         job = container.job_service.run_workflow(
@@ -206,11 +219,7 @@ def create_app() -> FastAPI:
         return {
             "job_id": job.job_id,
             "status": job.status,
-            "artifact_path": (
-                str(job.result.artifact_path)
-                if job.result is not None and job.result.artifact_path is not None
-                else None
-            ),
+            "artifact_path": str(job.artifact_path) if job.artifact_path is not None else None,
         }
 
     @app.post("/jobs/{job_id}/cancel")

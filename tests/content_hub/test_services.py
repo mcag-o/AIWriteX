@@ -8,13 +8,15 @@ from content_hub.application.services.publish_service import PublishService
 from content_hub.application.services.template_service import TemplateService
 from content_hub.application.services.workflow_service import WorkflowService
 from content_hub.application.jobs.event_service import JobEventService
-from content_hub.application.jobs.job_service import InMemoryJobRepository, JobRun
+from content_hub.application.jobs.job_service import InMemoryJobRepository, JobRun, JobService
 from content_hub.bootstrap.container import build_container
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
+from content_hub.infrastructure.storage.job_event_repository import FileJobEventRepository
 from content_hub.infrastructure.storage.job_repository import FileJobRepository
 from content_hub.infrastructure.storage.publish_record_repository import FilePublishRecordRepository
 from content_hub.infrastructure.storage.template_repository import FileTemplateRepository
+from content_hub.runtime.engine.workflow_engine import WorkflowEngine
 from content_hub.runtime.nodes.generation import StaticGenerationNode
 from content_hub.runtime.nodes.persist import PersistNode
 from content_hub.runtime.nodes.publish import RecordPublishNode
@@ -170,6 +172,19 @@ dimensional_creative:
         self.assertEqual([event.status for event in service.list_events("job-1")], ["running", "completed"])
         self.assertEqual(service.list_events("job-1")[-1].detail, "artifact ready")
 
+    def test_job_event_service_can_use_dedicated_event_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            job_repository = InMemoryJobRepository()
+            event_repository = FileJobEventRepository(Path(tmp_dir) / "job_events.json")
+            service = JobEventService(job_repository, event_repository)
+            job = job_repository.save(JobRun(job_id="job-1", status="running"))
+
+            service.record(job, status="running", message="workflow started")
+            service.record(job, status="completed", message="workflow completed", detail="artifact ready")
+
+            self.assertEqual([event.status for event in service.list_events("job-1")], ["running", "completed"])
+            self.assertEqual(event_repository.list_by_job("job-1")[-1].detail, "artifact ready")
+
     def test_build_container_exposes_job_event_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir)
@@ -199,6 +214,16 @@ dimensional_creative:
 
             self.assertIsInstance(container.job_event_service, JobEventService)
             self.assertIsInstance(container.job_service.job_repository, FileJobRepository)
+
+    def test_job_service_lists_jobs_from_repository(self) -> None:
+        repository = InMemoryJobRepository()
+        repository.save(JobRun(job_id="job-1", status="running"))
+        repository.save(JobRun(job_id="job-2", status="completed"))
+        service = JobService(engine=WorkflowEngine(NodeRegistry()), job_repository=repository)
+
+        jobs = service.list_jobs()
+
+        self.assertEqual([job.job_id for job in jobs], ["job-1", "job-2"])
 
 
 if __name__ == "__main__":

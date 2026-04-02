@@ -1,10 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: UTF-8 -*-
 
-"""
-AIWriteX 新架构
-基于FastAPI + PyWebView
-"""
+"""Legacy bridge module for the service-first content hub."""
 from src.ai_write_x.version import get_version, get_author
 
 __version__ = get_version()

@@ -1,6 +1,1 @@
-#!/usr/bin/env python
-# -*- coding: UTF-8 -*-
-
-"""
-AIWriteX Web API模块
-"""
+"""Legacy API package removed in favor of content_hub.interfaces.api."""

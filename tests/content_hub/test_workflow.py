@@ -66,6 +66,62 @@ class WorkflowEngineTestCase(unittest.TestCase):
         self.assertEqual(result.document.metadata["creative_style"], "storytelling")
         self.assertIn("storytelling", result.document.body)
 
+    def test_creative_node_records_selected_dimensions_and_compatibility(self) -> None:
+        settings = HubSettings(
+            llm=LLMSettings(provider="stub", model="stub-model"),
+            workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+            rewrite=RewriteSettings(enabled=True),
+            template=TemplateSettings(root_dir=Path("/tmp/templates")),
+            storage=StorageSettings(root_dir=Path("/tmp/storage")),
+            publish=PublishSettings(wechat_credentials=[]),
+        )
+        context = WorkflowContext(
+            settings=settings,
+            payload={
+                "topic": "创意流程",
+                "creative_style": "storytelling",
+                "creative_intensity": 1.1,
+                "creative_dimensions": [
+                    {"category": "style", "value": "叙事化", "description": "增强故事感"},
+                    {"category": "tone", "value": "温暖", "description": "增强亲和力"},
+                ],
+            },
+            document=ContentDocument(title="创意流程", body="# 创意流程\n\n原始内容", content_format="markdown"),
+        )
+
+        result = CreativeEnhancementNode().execute(context)
+
+        self.assertEqual(result.document.metadata["creative_intensity"], 1.1)
+        self.assertEqual(result.document.metadata["creative_intensity_description"], "激进")
+        self.assertEqual(len(result.document.metadata["selected_dimensions"]), 2)
+        self.assertEqual(result.document.metadata["selected_dimensions"][0]["category"], "style")
+        self.assertEqual(result.document.metadata["compatibility_score"], 1.0)
+
+    def test_creative_node_marks_incompatible_dimension_combinations(self) -> None:
+        settings = HubSettings(
+            llm=LLMSettings(provider="stub", model="stub-model"),
+            workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+            rewrite=RewriteSettings(enabled=True),
+            template=TemplateSettings(root_dir=Path("/tmp/templates")),
+            storage=StorageSettings(root_dir=Path("/tmp/storage")),
+            publish=PublishSettings(wechat_credentials=[]),
+        )
+        context = WorkflowContext(
+            settings=settings,
+            payload={
+                "topic": "创意流程",
+                "creative_dimensions": [
+                    {"category": "style", "value": "叙事化", "description": "增强故事感"},
+                    {"category": "format", "value": "清单体", "description": "增强结构感"},
+                ],
+            },
+            document=ContentDocument(title="创意流程", body="# 创意流程\n\n原始内容", content_format="markdown"),
+        )
+
+        result = CreativeEnhancementNode().execute(context)
+
+        self.assertLess(result.document.metadata["compatibility_score"], 1.0)
+
     def test_default_workflow_uses_creative_node_when_rewrite_enabled(self) -> None:
         settings = HubSettings(
             llm=LLMSettings(provider="stub", model="stub-model"),

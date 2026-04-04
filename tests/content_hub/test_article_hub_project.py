@@ -124,6 +124,16 @@ class ArticleHubProjectTestCase(unittest.TestCase):
 
         self.assertTrue(expected.issubset(actual))
 
+    def test_dimensional_engine_is_retained_only_as_frozen_supporting_module(self) -> None:
+        project_root = Path(__file__).resolve().parents[2]
+        dimensional_engine = (project_root / "src" / "ai_write_x" / "creative" / "dimensional_engine.py")
+        findings = (project_root / "findings.md").read_text(encoding="utf-8")
+        agents = (project_root / "AGENTS.md").read_text(encoding="utf-8")
+
+        self.assertTrue(dimensional_engine.exists())
+        self.assertIn("legacy supporting modules", findings)
+        self.assertIn("legacy supporting modules still under evaluation", agents.lower())
+
 
 if __name__ == "__main__":
     unittest.main()

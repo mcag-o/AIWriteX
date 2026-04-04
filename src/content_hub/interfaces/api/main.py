@@ -147,9 +147,29 @@ def create_app() -> FastAPI:
     async def content_list() -> dict:
         return {
             "data": [
-                {"title": item.title, "content_format": item.content_format}
-                for item in container.content_service.list_documents()
+                {
+                    "title": item["title"],
+                    "content_format": item["content_format"],
+                    "artifact_path": str(item["artifact_path"]),
+                    "publish_count": item["publish_count"],
+                    "published": item["published"],
+                    "last_publish_platform": item["last_publish_platform"],
+                    "last_published_at": item["last_published_at"],
+                }
+                for item in container.content_service.list_document_views()
             ]
+        }
+
+    @app.get("/content/detail")
+    async def content_detail(path: str) -> dict:
+        detail = container.content_service.get_document_detail(Path(path))
+        document = detail["document"]
+        return {
+            "title": document.title,
+            "body": document.body,
+            "content_format": document.content_format,
+            "artifact_path": str(detail["artifact_path"]),
+            "publish_history": detail["publish_history"],
         }
 
     @app.post("/content")
@@ -166,11 +186,14 @@ def create_app() -> FastAPI:
 
     @app.get("/content/read")
     async def read_content(path: str) -> dict:
-        document = container.content_service.read_document(Path(path))
+        detail = container.content_service.get_document_detail(Path(path))
+        document = detail["document"]
         return {
             "title": document.title,
             "body": document.body,
             "content_format": document.content_format,
+            "artifact_path": str(detail["artifact_path"]),
+            "publish_history": detail["publish_history"],
         }
 
     @app.put("/content")

@@ -18,6 +18,7 @@ class ApiStructureTestCase(unittest.TestCase):
         self.assertIn('@app.put("/templates/move")', source)
         self.assertIn('@app.delete("/templates")', source)
         self.assertIn('@app.get("/content")', source)
+        self.assertIn('@app.get("/content/detail")', source)
         self.assertIn('@app.post("/content")', source)
         self.assertIn('@app.get("/content/read")', source)
         self.assertIn('@app.put("/content")', source)

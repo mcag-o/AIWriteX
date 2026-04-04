@@ -105,6 +105,49 @@ dimensional_creative:
             updated = service.update_document(artifact.artifact_path, "# Insight\n\nUpdated")
             self.assertIn("Updated", updated.body)
 
+    def test_content_service_returns_document_detail_with_publish_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            article_repository = FileArticleRepository(tmp_path / "articles")
+            publish_repository = FilePublishRecordRepository(tmp_path / "publish_records.json")
+            publish_service = PublishService(
+                publish_repository,
+                {"wechat": RecordOnlyPublisher(publish_repository)},
+            )
+            service = ContentService(article_repository, publish_service)
+
+            artifact = service.create_document(title="Detail Article", body="# Detail", content_format="markdown")
+            publish_service.record_success("Detail Article", "wechat", {"appid": "demo-app"})
+
+            detail = service.get_document_detail(artifact.artifact_path)
+
+            self.assertEqual(detail["document"].title, "Detail Article")
+            self.assertEqual(detail["artifact_path"], artifact.artifact_path)
+            self.assertEqual(detail["publish_history"][0]["platform"], "wechat")
+
+    def test_content_service_returns_document_list_view_with_publish_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            article_repository = FileArticleRepository(tmp_path / "articles")
+            publish_repository = FilePublishRecordRepository(tmp_path / "publish_records.json")
+            publish_service = PublishService(
+                publish_repository,
+                {"wechat": RecordOnlyPublisher(publish_repository)},
+            )
+            service = ContentService(article_repository, publish_service)
+
+            artifact = service.create_document(title="List Article", body="# List", content_format="markdown")
+            publish_service.record_success("List Article", "wechat", {"appid": "demo-app"})
+
+            listing = service.list_document_views()
+
+            self.assertEqual(listing[0]["title"], "List Article")
+            self.assertEqual(listing[0]["artifact_path"], artifact.artifact_path)
+            self.assertEqual(listing[0]["publish_count"], 1)
+            self.assertTrue(listing[0]["published"])
+            self.assertEqual(listing[0]["last_publish_platform"], "wechat")
+            self.assertIsNotNone(listing[0]["last_published_at"])
+
     def test_template_service_returns_template_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir) / "templates"

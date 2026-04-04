@@ -55,6 +55,18 @@ class UpdateConfigRequest(BaseModel):
     rewrite: dict | None = None
 
 
+class SubmitReferenceUrlsRequest(BaseModel):
+    urls: list[str]
+
+
+class SubmitRawContentRequest(BaseModel):
+    items: list[dict]
+
+
+class SubmitHotTopicsRequest(BaseModel):
+    items: list[dict]
+
+
 def create_app() -> FastAPI:
     app = FastAPI(title="Content Hub API", version="0.1.0")
     project_root = Path(__file__).resolve().parents[4]
@@ -109,9 +121,24 @@ def create_app() -> FastAPI:
         return {"data": container.template_service.list_categories()}
 
     @app.get("/templates")
-    async def templates(category: str) -> dict:
+    async def templates(
+        category: str,
+        platform: str | None = None,
+        tag: str | None = None,
+        theme: str | None = None,
+        style: str | None = None,
+    ) -> dict:
         return {
-            "data": [item.__dict__ for item in container.template_service.list_templates(category)]
+            "data": [
+                item.__dict__
+                for item in container.template_service.list_templates(
+                    category,
+                    platform=platform,
+                    tag=tag,
+                    theme=theme,
+                    style=style,
+                )
+            ]
         }
 
     @app.post("/templates")
@@ -144,7 +171,7 @@ def create_app() -> FastAPI:
         return {"deleted": True}
 
     @app.get("/content")
-    async def content_list() -> dict:
+    async def content_list(title: str | None = None, published: bool | None = None) -> dict:
         return {
             "data": [
                 {
@@ -156,7 +183,10 @@ def create_app() -> FastAPI:
                     "last_publish_platform": item["last_publish_platform"],
                     "last_published_at": item["last_published_at"],
                 }
-                for item in container.content_service.list_document_views()
+                for item in container.content_service.list_document_views(
+                    title_query=title,
+                    published=published,
+                )
             ]
         }
 
@@ -206,11 +236,31 @@ def create_app() -> FastAPI:
         container.content_service.delete_document(Path(path))
         return {"deleted": True}
 
+    @app.get("/platforms")
+    async def list_platforms() -> dict:
+        return {"data": container.platform_service.list_platforms()}
+
     @app.get("/publish/records")
     async def publish_records(article_title: str | None = None) -> dict:
         if article_title:
             return {"data": container.publish_service.get_history(article_title)}
         return {"data": container.publish_service.list_records()}
+
+    @app.post("/ingestion/reference-urls")
+    async def submit_reference_urls(request: SubmitReferenceUrlsRequest) -> dict:
+        return container.ingestion_service.submit_reference_urls(request.urls)
+
+    @app.post("/ingestion/raw-content")
+    async def submit_raw_content(request: SubmitRawContentRequest) -> dict:
+        return container.ingestion_service.submit_raw_content(request.items)
+
+    @app.post("/ingestion/hot-topics")
+    async def submit_hot_topics(request: SubmitHotTopicsRequest) -> dict:
+        return container.ingestion_service.submit_hot_topics(request.items)
+
+    @app.get("/ingestion")
+    async def list_ingestion() -> dict:
+        return container.ingestion_service.list_records()
 
     @app.get("/jobs")
     async def list_jobs() -> dict:

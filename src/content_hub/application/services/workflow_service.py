@@ -13,8 +13,10 @@ class WorkflowService:
 
     def build_default_workflow(self, settings: HubSettings) -> WorkflowDefinition:
         nodes = ["generate"]
+        if settings.workflow.article_format.lower() == "html":
+            nodes.append("design")
         if settings.rewrite.enabled:
-            nodes.append("rewrite")
+            nodes.append("creative")
         nodes.append("persist")
         if settings.workflow.auto_publish:
             nodes.append("publish")

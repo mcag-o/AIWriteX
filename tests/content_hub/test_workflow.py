@@ -5,6 +5,8 @@ import unittest
 from content_hub.application.jobs.job_service import InMemoryJobRepository, JobService
 from content_hub.application.publishers.record_only_publisher import RecordOnlyPublisher
 from content_hub.application.services.publish_service import PublishService
+from content_hub.application.services.template_service import TemplateService
+from content_hub.application.services.workflow_service import WorkflowService
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
 from content_hub.domain.content.entities import ContentDocument
 from content_hub.domain.workflow.models import WorkflowDefinition
@@ -13,14 +15,137 @@ from content_hub.infrastructure.storage.publish_record_repository import FilePub
 from content_hub.infrastructure.storage.template_repository import FileTemplateRepository
 from content_hub.runtime.engine.workflow_engine import WorkflowEngine
 from content_hub.runtime.nodes.base import WorkflowContext
+from content_hub.runtime.nodes.creative import CreativeEnhancementNode
 from content_hub.runtime.nodes.generation import StaticGenerationNode
 from content_hub.runtime.nodes.persist import PersistNode
 from content_hub.runtime.nodes.publish import RecordPublishNode
 from content_hub.runtime.nodes.registry import NodeRegistry
 from content_hub.runtime.nodes.rewrite import SuffixRewriteNode
+from content_hub.runtime.nodes.design import SimpleDesignNode
+from content_hub.runtime.nodes.template_fill import TemplateFillNode
 
 
 class WorkflowEngineTestCase(unittest.TestCase):
+    def test_creative_node_enhances_document_and_marks_metadata(self) -> None:
+        settings = HubSettings(
+            llm=LLMSettings(provider="stub", model="stub-model"),
+            workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+            rewrite=RewriteSettings(enabled=True),
+            template=TemplateSettings(root_dir=Path("/tmp/templates")),
+            storage=StorageSettings(root_dir=Path("/tmp/storage")),
+            publish=PublishSettings(wechat_credentials=[]),
+        )
+        context = WorkflowContext(
+            settings=settings,
+            payload={"topic": "创意流程"},
+            document=ContentDocument(title="创意流程", body="# 创意流程\n\n原始内容", content_format="markdown"),
+        )
+
+        result = CreativeEnhancementNode().execute(context)
+
+        self.assertIn("创意增强", result.document.body)
+        self.assertEqual(result.document.metadata["transformation_type"], "dimensional_creative")
+
+    def test_creative_node_reads_style_from_payload_and_records_metadata(self) -> None:
+        settings = HubSettings(
+            llm=LLMSettings(provider="stub", model="stub-model"),
+            workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+            rewrite=RewriteSettings(enabled=True),
+            template=TemplateSettings(root_dir=Path("/tmp/templates")),
+            storage=StorageSettings(root_dir=Path("/tmp/storage")),
+            publish=PublishSettings(wechat_credentials=[]),
+        )
+        context = WorkflowContext(
+            settings=settings,
+            payload={"topic": "创意流程", "creative_style": "storytelling"},
+            document=ContentDocument(title="创意流程", body="# 创意流程\n\n原始内容", content_format="markdown"),
+        )
+
+        result = CreativeEnhancementNode().execute(context)
+
+        self.assertEqual(result.document.metadata["creative_style"], "storytelling")
+        self.assertIn("storytelling", result.document.body)
+
+    def test_default_workflow_uses_creative_node_when_rewrite_enabled(self) -> None:
+        settings = HubSettings(
+            llm=LLMSettings(provider="stub", model="stub-model"),
+            workflow=WorkflowSettings(publish_platform="wechat", article_format="markdown", auto_publish=False),
+            rewrite=RewriteSettings(enabled=True),
+            template=TemplateSettings(root_dir=Path("/tmp/templates")),
+            storage=StorageSettings(root_dir=Path("/tmp/storage")),
+            publish=PublishSettings(wechat_credentials=[]),
+        )
+
+        workflow = WorkflowService(NodeRegistry()).build_default_workflow(settings)
+
+        self.assertIn("creative", workflow.nodes)
+        self.assertNotIn("rewrite", workflow.nodes)
+    def test_html_workflow_can_use_design_node_without_template(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = HubSettings(
+                llm=LLMSettings(provider="stub", model="stub-model"),
+                workflow=WorkflowSettings(publish_platform="wechat", article_format="html", auto_publish=False),
+                rewrite=RewriteSettings(enabled=False),
+                template=TemplateSettings(root_dir=tmp_path / "templates"),
+                storage=StorageSettings(root_dir=tmp_path / "storage"),
+                publish=PublishSettings(wechat_credentials=[]),
+            )
+
+            registry = NodeRegistry()
+            registry.register("generate", StaticGenerationNode())
+            registry.register("design", SimpleDesignNode())
+            registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
+
+            workflow = WorkflowDefinition(name="html-design", nodes=["generate", "design", "persist"])
+            context = WorkflowContext(settings=settings, payload={"topic": "设计流程"})
+
+            result = WorkflowEngine(registry).execute(workflow, context)
+
+            self.assertEqual(result.document.content_format, "html")
+            self.assertIn("<html>", result.document.body)
+            self.assertIn("设计流程", result.document.body)
+            self.assertTrue(result.artifact_path is not None)
+            self.assertEqual(result.artifact_path.suffix, ".html")
+    def test_html_workflow_can_fill_template_before_persist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            settings = HubSettings(
+                llm=LLMSettings(provider="stub", model="stub-model"),
+                workflow=WorkflowSettings(publish_platform="wechat", article_format="html", auto_publish=False),
+                rewrite=RewriteSettings(enabled=False),
+                template=TemplateSettings(root_dir=tmp_path / "templates"),
+                storage=StorageSettings(root_dir=tmp_path / "storage"),
+                publish=PublishSettings(wechat_credentials=[]),
+            )
+            settings.template.root_dir.mkdir(parents=True, exist_ok=True)
+            (settings.template.root_dir / "Tech").mkdir(parents=True, exist_ok=True)
+            (settings.template.root_dir / "Tech" / "demo.html").write_text(
+                "<html><body><h1>{{title}}</h1><article>{{body}}</article></body></html>",
+                encoding="utf-8",
+            )
+
+            registry = NodeRegistry()
+            registry.register("generate", StaticGenerationNode())
+            registry.register(
+                "template",
+                TemplateFillNode(TemplateService(FileTemplateRepository(settings.template.root_dir))),
+            )
+            registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
+
+            workflow = WorkflowDefinition(name="html-template", nodes=["generate", "template", "persist"])
+            context = WorkflowContext(
+                settings=settings,
+                payload={"topic": "模板流程", "template_category": "Tech", "template_name": "demo"},
+            )
+
+            result = WorkflowEngine(registry).execute(workflow, context)
+
+            self.assertEqual(result.document.content_format, "html")
+            self.assertIn("<html>", result.document.body)
+            self.assertIn("模板流程", result.document.body)
+            self.assertTrue(result.artifact_path is not None)
+            self.assertEqual(result.artifact_path.suffix, ".html")
     def test_publish_node_delegates_to_publish_service(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             tmp_path = Path(tmp_dir)

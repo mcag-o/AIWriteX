@@ -12,29 +12,60 @@ class WeChatPublisher:
         self.credentials = credentials
 
     def publish(self, document: ContentDocument, platform: str, account_info: dict | None = None) -> PublishResult:
-        selected = self.credentials[0] if self.credentials else None
-        account_payload = account_info or {
-            "mode": "wechat-placeholder",
-            "channel": "wechat",
-            "appid": selected.appid if selected else "",
-            "author": selected.author if selected else "",
-        }
-        self.repository.append_record(
-            article_title=document.title,
-            platform=platform,
-            success=True,
-            account_info=account_payload,
-            error=None,
-        )
+        if not self.credentials:
+            return PublishResult(
+                success=False,
+                platform=platform,
+                message="未找到有效的微信公众号凭据",
+                metadata={
+                    "publisher": "wechat",
+                    "channel": "wechat",
+                    "credential_count": 0,
+                    "success_count": 0,
+                    "partial_success": False,
+                    "error_code": "MISSING_CREDENTIALS",
+                    "account_results": [],
+                },
+            )
+
+        selected_credentials = self.credentials
+        account_results = []
+        for credential in selected_credentials:
+            account_payload = account_info or {
+                "mode": "wechat-placeholder",
+                "channel": "wechat",
+                "appid": credential.appid,
+                "author": credential.author,
+            }
+            self.repository.append_record(
+                article_title=document.title,
+                platform=platform,
+                success=True,
+                account_info=account_payload,
+                error=None,
+            )
+            account_results.append(
+                {
+                    "appid": credential.appid,
+                    "author": credential.author,
+                    "success": True,
+                    "message": "wechat recorded",
+                }
+            )
         return PublishResult(
             success=True,
             platform=platform,
-            message="wechat recorded",
+            message=f"wechat recorded for {len(account_results)} account(s)",
             metadata={
                 "publisher": "wechat",
                 "channel": "wechat",
-                "mode": account_payload.get("mode", "wechat-placeholder"),
-                "appid": account_payload.get("appid", ""),
-                "author": account_payload.get("author", ""),
+                "mode": (account_info or {}).get("mode", "wechat-placeholder"),
+                "appid": account_results[0]["appid"] if account_results else "",
+                "author": account_results[0]["author"] if account_results else "",
+                "credential_count": len(account_results),
+                "success_count": len([item for item in account_results if item["success"]]),
+                "partial_success": False,
+                "error_code": None,
+                "account_results": account_results,
             },
         )

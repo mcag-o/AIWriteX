@@ -4,6 +4,8 @@ import unittest
 
 from content_hub.application.services.config_service import ConfigService
 from content_hub.application.services.content_service import ContentService
+from content_hub.application.services.ingestion_service import IngestionService
+from content_hub.application.services.platform_service import PlatformService
 from content_hub.application.services.publish_service import PublishService
 from content_hub.application.services.template_service import TemplateService
 from content_hub.application.services.workflow_service import WorkflowService
@@ -15,11 +17,15 @@ from content_hub.bootstrap.container import build_container
 from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSettings, RewriteSettings, StorageSettings, TemplateSettings, WeChatCredential, WorkflowSettings
 from content_hub.domain.content.entities import ContentDocument
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
+from content_hub.infrastructure.storage.ingestion_repository import FileReferenceIngestionRepository
+from content_hub.infrastructure.storage.ingestion_repository import FileRawContentIngestionRepository
+from content_hub.infrastructure.storage.ingestion_repository import FileHotTopicIngestionRepository
 from content_hub.infrastructure.storage.job_event_repository import FileJobEventRepository
 from content_hub.infrastructure.storage.job_repository import FileJobRepository
 from content_hub.infrastructure.storage.publish_record_repository import FilePublishRecordRepository
 from content_hub.infrastructure.storage.template_repository import FileTemplateRepository
 from content_hub.runtime.engine.workflow_engine import WorkflowEngine
+from content_hub.runtime.nodes.creative import CreativeEnhancementNode
 from content_hub.runtime.nodes.generation import StaticGenerationNode
 from content_hub.runtime.nodes.persist import PersistNode
 from content_hub.runtime.nodes.publish import RecordPublishNode
@@ -92,6 +98,74 @@ dimensional_creative:
             self.assertTrue(result.success)
             self.assertEqual(publish_service.list_records()["Weekly Note"][0]["platform"], "wechat")
 
+    def test_ingestion_service_submits_reference_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileReferenceIngestionRepository(Path(tmp_dir) / "reference_urls.json")
+            service = IngestionService(repository)
+
+            result = service.submit_reference_urls(["https://example.com/a", "https://example.com/b"])
+
+            self.assertEqual(result["submitted"], 2)
+            self.assertEqual(result["items"][0]["payload"]["url"], "https://example.com/a")
+            self.assertEqual(result["items"][0]["source_type"], "reference_url")
+
+    def test_ingestion_service_submits_raw_content_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            url_repository = FileReferenceIngestionRepository(Path(tmp_dir) / "reference_urls.json")
+            raw_repository = FileRawContentIngestionRepository(Path(tmp_dir) / "raw_contents.json")
+            service = IngestionService(url_repository, raw_repository)
+
+            result = service.submit_raw_content(
+                [{"title": "A", "body": "alpha"}, {"title": "B", "body": "beta"}]
+            )
+
+            self.assertEqual(result["submitted"], 2)
+            self.assertEqual(result["items"][0]["payload"]["title"], "A")
+            self.assertEqual(result["items"][0]["source_type"], "raw_content")
+
+    def test_ingestion_service_submits_hot_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            url_repository = FileReferenceIngestionRepository(Path(tmp_dir) / "reference_urls.json")
+            raw_repository = FileRawContentIngestionRepository(Path(tmp_dir) / "raw_contents.json")
+            topic_repository = FileHotTopicIngestionRepository(Path(tmp_dir) / "hot_topics.json")
+            service = IngestionService(url_repository, raw_repository, topic_repository)
+
+            result = service.submit_hot_topics([{"topic": "AI"}, {"topic": "Automation"}])
+
+            self.assertEqual(result["submitted"], 2)
+            self.assertEqual(result["items"][0]["payload"]["topic"], "AI")
+            self.assertEqual(result["items"][0]["source_type"], "hot_topic")
+
+    def test_ingestion_service_lists_all_ingestion_records(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            url_repository = FileReferenceIngestionRepository(Path(tmp_dir) / "reference_urls.json")
+            raw_repository = FileRawContentIngestionRepository(Path(tmp_dir) / "raw_contents.json")
+            topic_repository = FileHotTopicIngestionRepository(Path(tmp_dir) / "hot_topics.json")
+            service = IngestionService(url_repository, raw_repository, topic_repository)
+
+            service.submit_reference_urls(["https://example.com/a"])
+            service.submit_raw_content([{"title": "A", "body": "alpha"}])
+            service.submit_hot_topics([{"topic": "AI"}])
+
+            listing = service.list_records()
+
+            self.assertEqual(len(listing["reference_urls"]), 1)
+            self.assertEqual(len(listing["raw_content"]), 1)
+            self.assertEqual(len(listing["hot_topics"]), 1)
+
+    def test_platform_service_lists_platform_capabilities(self) -> None:
+        service = PlatformService()
+
+        platforms = service.list_platforms()
+        wechat = next(item for item in platforms if item["key"] == "wechat")
+
+        self.assertEqual(wechat["display_name"], "微信公众号")
+        self.assertTrue(wechat["supports_html"])
+        self.assertTrue(wechat["supports_template"])
+        self.assertTrue(wechat["supports_publish"])
+        self.assertEqual(wechat["default_content_format"], "html")
+        self.assertEqual(wechat["account_type"], "wechat_official")
+
     def test_content_service_lists_and_updates_documents(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             service = ContentService(FileArticleRepository(Path(tmp_dir)))
@@ -148,6 +222,29 @@ dimensional_creative:
             self.assertEqual(listing[0]["last_publish_platform"], "wechat")
             self.assertIsNotNone(listing[0]["last_published_at"])
 
+    def test_content_service_filters_document_views_by_title_and_published(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            article_repository = FileArticleRepository(tmp_path / "articles")
+            publish_repository = FilePublishRecordRepository(tmp_path / "publish_records.json")
+            publish_service = PublishService(
+                publish_repository,
+                {"wechat": RecordOnlyPublisher(publish_repository)},
+            )
+            service = ContentService(article_repository, publish_service)
+
+            service.create_document(title="Alpha Article", body="# A", content_format="markdown")
+            service.create_document(title="Beta Note", body="# B", content_format="markdown")
+            publish_service.record_success("Alpha Article", "wechat", {"appid": "demo-app"})
+
+            filtered_title = service.list_document_views(title_query="Alpha")
+            filtered_published = service.list_document_views(published=True)
+            filtered_unpublished = service.list_document_views(published=False)
+
+            self.assertEqual([item["title"] for item in filtered_title], ["Alpha Article"])
+            self.assertEqual([item["title"] for item in filtered_published], ["Alpha Article"])
+            self.assertEqual([item["title"] for item in filtered_unpublished], ["Beta Note"])
+
     def test_template_service_returns_template_content(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir) / "templates"
@@ -156,6 +253,44 @@ dimensional_creative:
             service = TemplateService(FileTemplateRepository(root))
 
             self.assertEqual(service.read_template("Tech", "alpha"), "<html>alpha</html>")
+
+    def test_template_service_filters_by_platform_and_tag(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir) / "templates"
+            (root / "Tech").mkdir(parents=True)
+            (root / "Tech" / "alpha.html").write_text(
+                """<!--
+platform: wechat
+tags: finance, featured
+theme: business
+style: editorial
+-->
+<html>alpha</html>
+""",
+                encoding="utf-8",
+            )
+            (root / "Tech" / "beta.html").write_text(
+                """<!--
+platform: web
+tags: general
+theme: casual
+style: brief
+-->
+<html>beta</html>
+""",
+                encoding="utf-8",
+            )
+            service = TemplateService(FileTemplateRepository(root))
+
+            wechat_templates = service.list_templates("Tech", platform="wechat")
+            finance_templates = service.list_templates("Tech", tag="finance")
+            business_templates = service.list_templates("Tech", theme="business")
+            editorial_templates = service.list_templates("Tech", style="editorial")
+
+            self.assertEqual([item.name for item in wechat_templates], ["alpha"])
+            self.assertEqual([item.name for item in finance_templates], ["alpha"])
+            self.assertEqual([item.name for item in business_templates], ["alpha"])
+            self.assertEqual([item.name for item in editorial_templates], ["alpha"])
 
     def test_template_service_supports_crud_workflow(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -245,6 +380,39 @@ dimensional_creative:
             self.assertEqual(record["account_info"]["appid"], "wx-first")
             self.assertEqual(record["account_info"]["author"], "Author A")
 
+    def test_wechat_publisher_reports_multi_account_summary_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FilePublishRecordRepository(Path(tmp_dir) / "publish_records.json")
+            publisher = WeChatPublisher(
+                repository,
+                [
+                    WeChatCredential(appid="wx-first", appsecret="secret-1", author="Author A"),
+                    WeChatCredential(appid="wx-second", appsecret="secret-2", author="Author B"),
+                ],
+            )
+            document = ContentDocument(title="Article C", body="# Demo", content_format="markdown")
+
+            result = publisher.publish(document, platform="wechat")
+
+            self.assertEqual(result.metadata["credential_count"], 2)
+            self.assertEqual(result.metadata["success_count"], 2)
+            self.assertEqual(len(result.metadata["account_results"]), 2)
+            self.assertEqual(result.metadata["account_results"][0]["appid"], "wx-first")
+            self.assertFalse(result.metadata["partial_success"])
+            self.assertIsNone(result.metadata["error_code"])
+
+    def test_wechat_publisher_returns_structured_failure_without_credentials(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FilePublishRecordRepository(Path(tmp_dir) / "publish_records.json")
+            publisher = WeChatPublisher(repository, [])
+            document = ContentDocument(title="Article D", body="# Demo", content_format="markdown")
+
+            result = publisher.publish(document, platform="wechat")
+
+            self.assertFalse(result.success)
+            self.assertEqual(result.metadata["error_code"], "MISSING_CREDENTIALS")
+            self.assertEqual(result.metadata["credential_count"], 0)
+
     def test_build_container_exposes_wechat_publisher(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_root = Path(tmp_dir)
@@ -288,7 +456,7 @@ dimensional_creative:
 
             registry = NodeRegistry()
             registry.register("generate", StaticGenerationNode())
-            registry.register("rewrite", SuffixRewriteNode(" [styled]"))
+            registry.register("creative", CreativeEnhancementNode())
             registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
             registry.register(
                 "publish",
@@ -304,7 +472,7 @@ dimensional_creative:
             service = WorkflowService(registry)
             result = service.run_default_workflow(settings=settings, payload={"topic": "服务化测试"})
 
-            self.assertIn("styled", result.document.body)
+            self.assertIn("创意增强", result.document.body)
             self.assertTrue(result.artifact_path is not None)
             self.assertEqual(result.publish_results[0].platform, "wechat")
 

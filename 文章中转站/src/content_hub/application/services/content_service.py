@@ -20,7 +20,11 @@ class ContentService:
     def list_documents(self) -> list[ContentDocument]:
         return self.repository.list_documents()
 
-    def list_document_views(self) -> list[dict]:
+    def list_document_views(
+        self,
+        title_query: str | None = None,
+        published: bool | None = None,
+    ) -> list[dict]:
         views = []
         for path in sorted(self.repository.root_dir.glob("*")):
             if path.suffix.lower() not in {".md", ".html", ".txt"}:
@@ -30,17 +34,20 @@ class ContentService:
             if self.publish_service is not None:
                 publish_history = self.publish_service.get_history(document.title)
             last_record = publish_history[-1] if publish_history else None
-            views.append(
-                {
-                    "title": document.title,
-                    "content_format": document.content_format,
-                    "artifact_path": path,
-                    "publish_count": len(publish_history),
-                    "published": bool(publish_history),
-                    "last_publish_platform": last_record.get("platform") if last_record else None,
-                    "last_published_at": last_record.get("timestamp") if last_record else None,
-                }
-            )
+            view = {
+                "title": document.title,
+                "content_format": document.content_format,
+                "artifact_path": path,
+                "publish_count": len(publish_history),
+                "published": bool(publish_history),
+                "last_publish_platform": last_record.get("platform") if last_record else None,
+                "last_published_at": last_record.get("timestamp") if last_record else None,
+            }
+            if title_query is not None and title_query.lower() not in document.title.lower():
+                continue
+            if published is not None and view["published"] is not published:
+                continue
+            views.append(view)
         return views
 
     def read_document(self, path) -> ContentDocument:

@@ -4,6 +4,9 @@ import tempfile
 import unittest
 
 from content_hub.application.jobs.job_service import JobEvent, JobRun
+from content_hub.infrastructure.storage.ingestion_repository import FileReferenceIngestionRepository
+from content_hub.infrastructure.storage.ingestion_repository import FileRawContentIngestionRepository
+from content_hub.infrastructure.storage.ingestion_repository import FileHotTopicIngestionRepository
 from content_hub.infrastructure.storage.job_event_repository import FileJobEventRepository
 from content_hub.infrastructure.storage.job_repository import FileJobRepository
 from content_hub.domain.content.entities import ContentDocument
@@ -28,6 +31,32 @@ class RepositoryTestCase(unittest.TestCase):
             self.assertEqual(len(templates), 1)
             self.assertEqual(templates[0].name, "t1")
             self.assertIn("Hello", repository.read_template("Tech", "t1"))
+
+    def test_template_repository_reads_inline_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            template_root = Path(tmp_dir) / "templates"
+            category = template_root / "Tech"
+            category.mkdir(parents=True)
+            template_path = category / "t1.html"
+            template_path.write_text(
+                """<!--
+platform: wechat
+tags: finance, longform
+theme: business
+style: editorial
+-->
+<html><body>Hello</body></html>
+""",
+                encoding="utf-8",
+            )
+
+            repository = FileTemplateRepository(template_root)
+            templates = repository.list_templates("Tech")
+
+            self.assertEqual(templates[0].metadata["platform"], "wechat")
+            self.assertEqual(templates[0].metadata["tags"], ["finance", "longform"])
+            self.assertEqual(templates[0].metadata["theme"], "business")
+            self.assertEqual(templates[0].metadata["style"], "editorial")
 
     def test_template_repository_supports_crud_operations(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -151,6 +180,40 @@ class RepositoryTestCase(unittest.TestCase):
 
             self.assertEqual([event.status for event in events], ["running", "completed"])
             self.assertEqual(events[-1].detail, "saved")
+
+    def test_reference_ingestion_repository_persists_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileReferenceIngestionRepository(Path(tmp_dir) / "reference_urls.json")
+
+            repository.add_urls(["https://example.com/a", "https://example.com/b"])
+            urls = repository.list_urls()
+
+            self.assertEqual(urls[0]["payload"]["url"], "https://example.com/a")
+            self.assertEqual(urls[0]["source_type"], "reference_url")
+            self.assertEqual(urls[0]["status"], "received")
+            self.assertIn("created_at", urls[0])
+
+    def test_raw_content_ingestion_repository_persists_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileRawContentIngestionRepository(Path(tmp_dir) / "raw_contents.json")
+
+            repository.add_items([{"title": "A", "body": "alpha"}, {"title": "B", "body": "beta"}])
+            items = repository.list_items()
+
+            self.assertEqual(items[0]["payload"]["title"], "A")
+            self.assertEqual(items[1]["payload"]["body"], "beta")
+            self.assertEqual(items[0]["source_type"], "raw_content")
+
+    def test_hot_topic_ingestion_repository_persists_topics(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            repository = FileHotTopicIngestionRepository(Path(tmp_dir) / "hot_topics.json")
+
+            repository.add_items([{"topic": "AI"}, {"topic": "Automation"}])
+            items = repository.list_items()
+
+            self.assertEqual(items[0]["payload"]["topic"], "AI")
+            self.assertEqual(items[1]["payload"]["topic"], "Automation")
+            self.assertEqual(items[0]["source_type"], "hot_topic")
 
 
 if __name__ == "__main__":

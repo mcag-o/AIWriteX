@@ -169,8 +169,9 @@ uv pip install -r requirements.txt
 
 3. 配置 `config.yaml`、`aiforge.toml`（_微信公众号AppID/AppSecret、大模型提供商的API KEY_）
 4. 运行：
-   - 有UI界面：`python .\main.py` (**推荐**)
-   - 无UI界面：`python -m src.ai_write_x.crew_main` （**不支持文章、模板、配图管理**）
+   - Root extraction API：`PYTHONPATH=src uvicorn content_hub.interfaces.api.main:app --reload`
+   - 独立中转站：`python3 "文章中转站/main.py"`
+   - 兼容桥接入口：`python -m src.ai_write_x.crew_main`（仅保留为 legacy workflow bridge）
 
 ## 🔍 问题定位
 

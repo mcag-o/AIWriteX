@@ -12,6 +12,7 @@ from content_hub.bootstrap.settings import HubSettings, LLMSettings, PublishSett
 from content_hub.infrastructure.storage.article_repository import FileArticleRepository
 from content_hub.infrastructure.storage.publish_record_repository import FilePublishRecordRepository
 from content_hub.infrastructure.storage.template_repository import FileTemplateRepository
+from content_hub.runtime.nodes.creative import CreativeEnhancementNode
 from content_hub.runtime.nodes.generation import StaticGenerationNode
 from content_hub.runtime.nodes.persist import PersistNode
 from content_hub.runtime.nodes.publish import RecordPublishNode
@@ -145,7 +146,7 @@ dimensional_creative:
 
             registry = NodeRegistry()
             registry.register("generate", StaticGenerationNode())
-            registry.register("rewrite", SuffixRewriteNode(" [styled]"))
+            registry.register("creative", CreativeEnhancementNode())
             registry.register("persist", PersistNode(FileArticleRepository(settings.storage.article_dir)))
             registry.register(
                 "publish",
@@ -161,7 +162,7 @@ dimensional_creative:
             service = WorkflowService(registry)
             result = service.run_default_workflow(settings=settings, payload={"topic": "服务化测试"})
 
-            self.assertIn("styled", result.document.body)
+            self.assertIn("创意增强", result.document.body)
             self.assertTrue(result.artifact_path is not None)
             self.assertEqual(result.publish_results[0].platform, "wechat")
 

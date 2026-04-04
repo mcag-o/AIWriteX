@@ -11,8 +11,24 @@ class TemplateService:
     def list_categories(self) -> list[str]:
         return self.repository.list_categories()
 
-    def list_templates(self, category: str) -> list[TemplateAsset]:
-        return self.repository.list_templates(category)
+    def list_templates(
+        self,
+        category: str,
+        platform: str | None = None,
+        tag: str | None = None,
+        theme: str | None = None,
+        style: str | None = None,
+    ) -> list[TemplateAsset]:
+        templates = self.repository.list_templates(category)
+        if platform is not None:
+            templates = [item for item in templates if item.metadata.get("platform") == platform]
+        if tag is not None:
+            templates = [item for item in templates if tag in item.metadata.get("tags", [])]
+        if theme is not None:
+            templates = [item for item in templates if item.metadata.get("theme") == theme]
+        if style is not None:
+            templates = [item for item in templates if item.metadata.get("style") == style]
+        return templates
 
     def read_template(self, category: str, name: str) -> str:
         return self.repository.read_template(category, name)

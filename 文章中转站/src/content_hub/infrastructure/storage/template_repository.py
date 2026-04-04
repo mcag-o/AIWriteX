@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 from content_hub.domain.template.entities import TemplateAsset
 
@@ -19,9 +20,32 @@ class FileTemplateRepository:
         if not category_dir.exists():
             return []
         return [
-            TemplateAsset(category=category, name=file.stem, path=str(file))
+            TemplateAsset(
+                category=category,
+                name=file.stem,
+                path=str(file),
+                metadata=self._read_metadata(file),
+            )
             for file in sorted(category_dir.glob("*.html"))
         ]
+
+    def _read_metadata(self, path: Path) -> dict:
+        content = path.read_text(encoding="utf-8")
+        match = re.match(r"\s*<!--\s*(.*?)\s*-->", content, re.DOTALL)
+        if not match:
+            return {}
+        metadata = {}
+        for line in match.group(1).splitlines():
+            if ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            key = key.strip()
+            value = value.strip()
+            if key == "tags":
+                metadata[key] = [item.strip() for item in value.split(",") if item.strip()]
+            else:
+                metadata[key] = value
+        return metadata
 
     def read_template(self, category: str, name: str) -> str:
         return (self.root_dir / category / f"{name}.html").read_text(encoding="utf-8")
